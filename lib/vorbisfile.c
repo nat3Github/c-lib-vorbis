@@ -1438,7 +1438,7 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
     ogg_int64_t endtime = vf->pcmlengths[link*2+1]+begintime;
     ogg_int64_t target=pos-total+begintime;
     ogg_int64_t best=-1;
-    int         got_page=0;
+    ogg_int64_t got_page=-1;
 
     ogg_page og;
 
@@ -1450,7 +1450,7 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
       result=_get_next_page(vf,&og,1);
       if(result<0) goto seek_error;
 
-      got_page=1;
+      got_page=result;
     }
 
     /* bisection loop */
@@ -1496,12 +1496,13 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
           }
         }else{
           ogg_int64_t granulepos;
-          got_page=1;
 
-          /* got a page. analyze it */
           /* only consider pages from primary vorbis stream */
           if(ogg_page_serialno(&og)!=vf->serialnos[link])
             continue;
+
+          /* got a page. analyze it */
+          got_page=result;
 
           /* only consider pages with the granulepos set */
           granulepos=ogg_page_granulepos(&og);
@@ -1559,13 +1560,11 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
          bisection would 'fail' because our search target was before the
          first PCM granule position fencepost. */
 
-      if(got_page &&
-         begin == vf->dataoffsets[link] &&
-         ogg_page_serialno(&og)==vf->serialnos[link]){
+      if(got_page >= 0 &&
+         begin == vf->dataoffsets[link]){
 
-        /* Yes, this is the beginning-of-stream case. We already have
-           our page, right at the beginning of PCM data.  Set state
-           and return. */
+        /* Yes, this is the beginning-of-stream case. The best candidate is
+           right at the beginning of PCM data.  Set state and return. */
 
         vf->pcm_offset=total;
 
@@ -1582,6 +1581,15 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
         }
 
         ogg_stream_reset_serialno(&vf->os,vf->current_serialno);
+        if(got_page!=begin){
+          /* If the page we found was not itself the first one (which can
+             happen, as we only bisect back to begin+1), we need to go back and
+             read the first one. */
+          result=_seek_helper(vf,begin);
+          if(result) goto seek_error;
+          result=_get_next_page(vf,&og,-1);
+          if(result<0) goto seek_error;
+        }
         ogg_stream_pagein(&vf->os,&og);
 
       }else
