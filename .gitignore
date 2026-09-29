@@ -59,3 +59,6 @@ CMakeSettings.json
 
 .vs/
 .vscode/
+.zig-cache/
+zig-out/
+zig-pkg/
