@@ -569,7 +569,10 @@ static int _bisect_forward_serialno(OggVorbis_File *vf,
     if(ret)return(ret);
 
     ret=_fetch_headers(vf,&vi,&vc,&next_serialno_list,&next_serialnos,NULL);
-    if(ret)return(ret);
+    if(ret){
+      if(next_serialno_list)_ogg_free(next_serialno_list);
+      return(ret);
+    }
     serialno = vf->os.serialno;
     dataoffset = vf->offset;
 
@@ -579,9 +582,12 @@ static int _bisect_forward_serialno(OggVorbis_File *vf,
 
     ret=_bisect_forward_serialno(vf,next,vf->offset,end,endgran,endserial,
                                  next_serialno_list,next_serialnos,m+1);
-    if(ret)return(ret);
-
     if(next_serialno_list)_ogg_free(next_serialno_list);
+    if(ret){
+      vorbis_info_clear(&vi);
+      vorbis_comment_clear(&vc);
+      return(ret);
+    }
 
     vf->offsets[m+1]=next;
     vf->serialnos[m+1]=serialno;
