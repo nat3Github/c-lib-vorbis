@@ -75,6 +75,7 @@ static vorbis_info_floor *floor0_unpack (vorbis_info *vi,oggpack_buffer *opb){
   int j;
 
   vorbis_info_floor0 *info=_ogg_malloc(sizeof(*info));
+  if(!info)return(NULL);
   info->order=oggpack_read(opb,8);
   info->rate=oggpack_read(opb,16);
   info->barkmap=oggpack_read(opb,16);
@@ -131,6 +132,7 @@ static void floor0_map_lazy_init(vorbis_block      *vb,
        necessary in some mapping combinations to keep the scale spacing
        accurate */
     look->linearmap[W]=_ogg_malloc((n+1)*sizeof(**look->linearmap));
+    if(!look->linearmap[W])return; /* floor0_inverse2 outputs silence */
     for(j=0;j<n;j++){
       int val=floor( toBARK((info->rate/2.f)/n*j)
                      *scale); /* bark numbers represent band edges */
@@ -148,12 +150,17 @@ static vorbis_look_floor *floor0_look(vorbis_dsp_state *vd,
   vorbis_look_floor0 *look=_ogg_calloc(1,sizeof(*look));
 
   (void)vd;
+  if(!look)return(NULL);
 
   look->m=info->order;
   look->ln=info->barkmap;
   look->vi=info;
 
   look->linearmap=_ogg_calloc(2,sizeof(*look->linearmap));
+  if(!look->linearmap){
+    _ogg_free(look);
+    return(NULL);
+  }
 
   return look;
 }
@@ -178,6 +185,7 @@ static void *floor0_inverse1(vorbis_block *vb,vorbis_look_floor *i){
          smash; b->dim is provably more than we can overflow the
          vector */
       float *lsp=_vorbis_block_alloc(vb,sizeof(*lsp)*(look->m+b->dim+1));
+      if(!lsp)goto eop;
 
       if(vorbis_book_decodev_set(b,lsp,&vb->opb,look->m)==-1)goto eop;
       for(j=0;j<look->m;){
@@ -199,6 +207,11 @@ static int floor0_inverse2(vorbis_block *vb,vorbis_look_floor *i,
   vorbis_info_floor0 *info=look->vi;
 
   floor0_map_lazy_init(vb,info,look);
+  if(!look->linearmap[vb->W]){
+    codec_setup_info *ci=vb->vd->vi->codec_setup;
+    memset(out,0,sizeof(*out)*(ci->blocksizes[vb->W]/2));
+    return(0);
+  }
 
   if(memo){
     float *lsp=(float *)memo;

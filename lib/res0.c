@@ -137,11 +137,13 @@ void res0_free_look(vorbis_look_residue *i){
     }
     fprintf(stderr,"\n");*/
 
-    for(j=0;j<look->parts;j++)
-      if(look->partbooks[j])_ogg_free(look->partbooks[j]);
+    if(look->partbooks)
+      for(j=0;j<look->parts;j++)
+        if(look->partbooks[j])_ogg_free(look->partbooks[j]);
     _ogg_free(look->partbooks);
-    for(j=0;j<look->partvals;j++)
-      _ogg_free(look->decodemap[j]);
+    if(look->decodemap)
+      for(j=0;j<look->partvals;j++)
+        _ogg_free(look->decodemap[j]);
     _ogg_free(look->decodemap);
 
     memset(look,0,sizeof(*look));
@@ -194,6 +196,7 @@ vorbis_info_residue *res0_unpack(vorbis_info *vi,oggpack_buffer *opb){
   vorbis_info_residue0 *info=_ogg_calloc(1,sizeof(*info));
   codec_setup_info     *ci=vi->codec_setup;
 
+  if(!info)return(NULL);
   info->begin=oggpack_read(opb,24);
   info->end=oggpack_read(opb,24);
   info->grouping=oggpack_read(opb,24)+1;
@@ -262,6 +265,7 @@ vorbis_look_residue *res0_look(vorbis_dsp_state *vd,
   int j,k,acc=0;
   int dim;
   int maxstage=0;
+  if(!look)return(NULL);
   look->info=info;
 
   look->parts=info->partitions;
@@ -272,12 +276,14 @@ vorbis_look_residue *res0_look(vorbis_dsp_state *vd,
    look->fullbooks[look->phrasebook].dim:look->decbooks[look->phrasebook].dim;
 
   look->partbooks=_ogg_calloc(look->parts,sizeof(*look->partbooks));
+  if(!look->partbooks)goto errout;
 
   for(j=0;j<look->parts;j++){
     int stages=ov_ilog(info->secondstages[j]);
     if(stages){
       if(stages>maxstage)maxstage=stages;
       look->partbooks[j]=_ogg_calloc(stages,sizeof(*look->partbooks[j]));
+      if(!look->partbooks[j])goto errout;
       for(k=0;k<stages;k++)
         if(info->secondstages[j]&(1<<k)){
           look->partbooks[j][k]=info->booklist[acc++];
@@ -297,11 +303,13 @@ vorbis_look_residue *res0_look(vorbis_dsp_state *vd,
       look->partvals*=look->parts;
 
   look->stages=maxstage;
-  look->decodemap=_ogg_malloc(look->partvals*sizeof(*look->decodemap));
+  look->decodemap=_ogg_calloc(look->partvals,sizeof(*look->decodemap));
+  if(!look->decodemap)goto errout;
   for(j=0;j<look->partvals;j++){
     long val=j;
     long mult=look->partvals/look->parts;
     look->decodemap[j]=_ogg_malloc(dim*sizeof(*look->decodemap[j]));
+    if(!look->decodemap[j])goto errout;
     for(k=0;k<dim;k++){
       long deco=val/mult;
       val-=deco*mult;
@@ -316,6 +324,9 @@ vorbis_look_residue *res0_look(vorbis_dsp_state *vd,
   }
 #endif
   return(look);
+ errout:
+  res0_free_look(look);
+  return(NULL);
 }
 
 /* break an abstraction and copy some code for performance purposes */
@@ -423,6 +434,7 @@ static long **_01class(vorbis_block *vb,vorbis_look_residue *vl,
   int partvals=n/samples_per_partition;
   long **partword=_vorbis_block_alloc(vb,ch*sizeof(*partword));
   float scale=100./samples_per_partition;
+  if(!partword)return(NULL);
 
   /* we find the partition type for each partition of each
      channel.  We'll go back and do the interleaved encoding in a
@@ -430,6 +442,7 @@ static long **_01class(vorbis_block *vb,vorbis_look_residue *vl,
 
   for(i=0;i<ch;i++){
     partword[i]=_vorbis_block_alloc(vb,n/samples_per_partition*sizeof(*partword[i]));
+    if(!partword[i])return(NULL);
     memset(partword[i],0,n/samples_per_partition*sizeof(*partword[i]));
   }
 
@@ -495,7 +508,9 @@ static long **_2class(vorbis_block *vb,vorbis_look_residue *vl,int **in,
   char buffer[80];
 #endif
 
+  if(!partword)return(NULL);
   partword[0]=_vorbis_block_alloc(vb,partvals*sizeof(*partword[0]));
+  if(!partword[0])return(NULL);
   memset(partword[0],0,partvals*sizeof(*partword[0]));
 
   for(i=0,l=info->begin/ch;i<partvals;i++){
@@ -670,8 +685,10 @@ static int _01inverse(vorbis_block *vb,vorbis_look_residue *vl,
     int partwords=(partvals+partitions_per_word-1)/partitions_per_word;
     int ***partword=alloca(ch*sizeof(*partword));
 
-    for(j=0;j<ch;j++)
+    for(j=0;j<ch;j++){
       partword[j]=_vorbis_block_alloc(vb,partwords*sizeof(*partword[j]));
+      if(!partword[j])goto errout;
+    }
 
     for(s=0;s<look->stages;s++){
 
@@ -789,6 +806,7 @@ int res2_forward(oggpack_buffer *opb,
      reshape ourselves into a single channel res1 */
   /* ugly; reallocs for each coupling pass :-( */
   int *work=_vorbis_block_alloc(vb,ch*n*sizeof(*work));
+  if(!work)return(0); /* allocation failure: nothing encoded */
   for(i=0;i<ch;i++){
     int *pcm=in[i];
     if(nonzero[i])used++;
@@ -828,6 +846,7 @@ int res2_inverse(vorbis_block *vb,vorbis_look_residue *vl,
     int partwords=(partvals+partitions_per_word-1)/partitions_per_word;
     int **partword=_vorbis_block_alloc(vb,partwords*sizeof(*partword));
 
+    if(!partword)goto errout;
     for(i=0;i<ch;i++)if(nonzero[i])break;
     if(i==ch)return(0); /* no nonzero vectors */
 

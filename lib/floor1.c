@@ -118,6 +118,7 @@ static vorbis_info_floor *floor1_unpack (vorbis_info *vi,oggpack_buffer *opb){
   int j,k,count=0,maxclass=-1,rangebits;
 
   vorbis_info_floor1 *info=_ogg_calloc(1,sizeof(*info));
+  if(!info)return(NULL);
   /* read partitions */
   info->partitions=oggpack_read(opb,5); /* only 0 to 31 legal */
   for(j=0;j<info->partitions;j++){
@@ -186,6 +187,7 @@ static vorbis_look_floor *floor1_look(vorbis_dsp_state *vd,
   int i,j,n=0;
 
   (void)vd;
+  if(!look)return(NULL);
 
   look->vi=info;
   look->n=info->postlist[1];
@@ -698,6 +700,7 @@ int *floor1_fit(vorbis_block *vb,vorbis_look_floor1 *look,
     }
 
     output=_vorbis_block_alloc(vb,sizeof(*output)*posts);
+    if(!output)return(NULL);
 
     output[0]=post_Y(fit_valueA,fit_valueB,0);
     output[1]=post_Y(fit_valueA,fit_valueB,1);
@@ -738,6 +741,7 @@ int *floor1_interpolate_fit(vorbis_block *vb,vorbis_look_floor1 *look,
 
   if(A && B){
     output=_vorbis_block_alloc(vb,sizeof(*output)*posts);
+    if(!output)return(NULL);
 
     /* overly simpleminded--- look again post 1.2 */
     for(i=0;i<posts;i++){
@@ -963,6 +967,7 @@ static void *floor1_inverse1(vorbis_block *vb,vorbis_look_floor *in){
   /* unpack wrapped/predicted values from stream */
   if(oggpack_read(&vb->opb,1)==1){
     int *fit_value=_vorbis_block_alloc(vb,(look->posts)*sizeof(*fit_value));
+    if(!fit_value)goto eop;
 
     fit_value[0]=oggpack_read(&vb->opb,ov_ilog(look->quant_q-1));
     fit_value[1]=oggpack_read(&vb->opb,ov_ilog(look->quant_q-1));

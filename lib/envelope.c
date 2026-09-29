@@ -28,7 +28,8 @@
 #include "mdct.h"
 #include "misc.h"
 
-void _ve_envelope_init(envelope_lookup *e,vorbis_info *vi){
+/* returns nonzero on allocation failure; _ve_envelope_clear frees the rest */
+int _ve_envelope_init(envelope_lookup *e,vorbis_info *vi){
   codec_setup_info *ci=vi->codec_setup;
   vorbis_info_psy_global *gi=&ci->psy_g_param;
   int ch=vi->channels;
@@ -41,7 +42,7 @@ void _ve_envelope_init(envelope_lookup *e,vorbis_info *vi){
   e->storage=128;
   e->cursor=ci->blocksizes[1]/2;
   e->mdct_win=_ogg_calloc(n,sizeof(*e->mdct_win));
-  mdct_init(&e->mdct,n);
+  if(!e->mdct_win || mdct_init(&e->mdct,n))return -1;
 
   for(i=0;i<n;i++){
     e->mdct_win[i]=sin(i/(n-1.)*M_PI);
@@ -60,6 +61,7 @@ void _ve_envelope_init(envelope_lookup *e,vorbis_info *vi){
   for(j=0;j<VE_BANDS;j++){
     n=e->band[j].end;
     e->band[j].window=_ogg_malloc(n*sizeof(*e->band[0].window));
+    if(!e->band[j].window)return -1;
     for(i=0;i<n;i++){
       e->band[j].window[i]=sin((i+.5)/n*M_PI);
       e->band[j].total+=e->band[j].window[i];
@@ -69,7 +71,8 @@ void _ve_envelope_init(envelope_lookup *e,vorbis_info *vi){
 
   e->filter=_ogg_calloc(VE_BANDS*ch,sizeof(*e->filter));
   e->mark=_ogg_calloc(e->storage,sizeof(*e->mark));
-
+  if(!e->filter||!e->mark)return -1;
+  return 0;
 }
 
 void _ve_envelope_clear(envelope_lookup *e){
@@ -225,8 +228,10 @@ long _ve_envelope_search(vorbis_dsp_state *v){
 
   /* make sure we have enough storage to match the PCM */
   if(last+VE_WIN+VE_POST>ve->storage){
+    int *mark=_ogg_realloc(ve->mark,(last+VE_WIN+VE_POST)*sizeof(*ve->mark));
+    if(!mark)return -2; /* allocation failure */
+    ve->mark=mark;
     ve->storage=last+VE_WIN+VE_POST; /* be sure */
-    ve->mark=_ogg_realloc(ve->mark,ve->storage*sizeof(*ve->mark));
   }
 
   for(j=first;j<last;j++){

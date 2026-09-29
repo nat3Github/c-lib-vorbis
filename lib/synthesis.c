@@ -78,8 +78,14 @@ int vorbis_synthesis(vorbis_block *vb,ogg_packet *op){
   /* alloc pcm passback storage */
   vb->pcmend=ci->blocksizes[vb->W];
   vb->pcm=_vorbis_block_alloc(vb,sizeof(*vb->pcm)*vi->channels);
-  for(i=0;i<vi->channels;i++)
+  if(!vb->pcm)return(OV_EFAULT);
+  for(i=0;i<vi->channels;i++){
     vb->pcm[i]=_vorbis_block_alloc(vb,vb->pcmend*sizeof(*vb->pcm[i]));
+    if(!vb->pcm[i]){
+      vb->pcm=NULL;
+      return(OV_EFAULT);
+    }
+  }
 
   /* unpack_header enforces range checking */
   type=ci->map_type[ci->mode_param[mode]->mapping];

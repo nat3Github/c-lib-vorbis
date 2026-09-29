@@ -68,7 +68,9 @@ static long _get_data(OggVorbis_File *vf){
   if(!(vf->callbacks.read_func))return(-1);
   if(vf->datasource){
     char *buffer=ogg_sync_buffer(&vf->oy,READSIZE);
-    long bytes=(vf->callbacks.read_func)(buffer,1,READSIZE,vf->datasource);
+    long bytes;
+    if(!buffer)return(-1); /* allocation failure */
+    bytes=(vf->callbacks.read_func)(buffer,1,READSIZE,vf->datasource);
     if(bytes>0)ogg_sync_wrote(&vf->oy,bytes);
     if(bytes==0 && errno)return(-1);
     return(bytes);
@@ -185,17 +187,22 @@ static ogg_int64_t _get_prev_page(OggVorbis_File *vf,ogg_int64_t begin,ogg_page 
   return(offset);
 }
 
-static void _add_serialno(ogg_page *og,long **serialno_list, int *n){
+/* nonzero on allocation failure (the list is left as it was) */
+static int _add_serialno(ogg_page *og,long **serialno_list, int *n){
   long s = ogg_page_serialno(og);
-  (*n)++;
+  long *list;
 
   if(*serialno_list){
-    *serialno_list = _ogg_realloc(*serialno_list, sizeof(**serialno_list)*(*n));
+    list = _ogg_realloc(*serialno_list, sizeof(**serialno_list)*(*n+1));
   }else{
-    *serialno_list = _ogg_malloc(sizeof(**serialno_list));
+    list = _ogg_malloc(sizeof(**serialno_list));
   }
+  if(!list)return -1;
+  *serialno_list = list;
+  (*n)++;
 
   (*serialno_list)[(*n)-1] = s;
+  return 0;
 }
 
 /* returns nonzero if found */
@@ -314,7 +321,10 @@ static int _fetch_headers(OggVorbis_File *vf,vorbis_info *vi,vorbis_comment *vc,
         goto bail_header;
       }
 
-      _add_serialno(og_ptr,serialno_list,serialno_n);
+      if(_add_serialno(og_ptr,serialno_list,serialno_n)){
+        ret=OV_EFAULT;
+        goto bail_header;
+      }
     }
 
     if(vf->ready_state<STREAMSET){
@@ -505,17 +515,26 @@ static int _bisect_forward_serialno(OggVorbis_File *vf,
       searched=_get_prev_page_serial(vf,searched,currentno_list,currentnos,&endserial,&endgran);
     }
 
-    vf->links=m+1;
     if(vf->offsets)_ogg_free(vf->offsets);
     if(vf->serialnos)_ogg_free(vf->serialnos);
     if(vf->dataoffsets)_ogg_free(vf->dataoffsets);
 
-    vf->offsets=_ogg_malloc((vf->links+1)*sizeof(*vf->offsets));
-    vf->vi=_ogg_realloc(vf->vi,vf->links*sizeof(*vf->vi));
-    vf->vc=_ogg_realloc(vf->vc,vf->links*sizeof(*vf->vc));
-    vf->serialnos=_ogg_malloc(vf->links*sizeof(*vf->serialnos));
-    vf->dataoffsets=_ogg_malloc(vf->links*sizeof(*vf->dataoffsets));
-    vf->pcmlengths=_ogg_malloc(vf->links*2*sizeof(*vf->pcmlengths));
+    vf->offsets=_ogg_malloc((m+2)*sizeof(*vf->offsets));
+    vf->serialnos=_ogg_malloc((m+1)*sizeof(*vf->serialnos));
+    vf->dataoffsets=_ogg_malloc((m+1)*sizeof(*vf->dataoffsets));
+    vf->pcmlengths=_ogg_malloc((m+1)*2*sizeof(*vf->pcmlengths));
+    {
+      vorbis_info *vi=_ogg_realloc(vf->vi,(m+1)*sizeof(*vf->vi));
+      vorbis_comment *vc;
+      if(vi)vf->vi=vi;
+      vc=_ogg_realloc(vf->vc,(m+1)*sizeof(*vf->vc));
+      if(vc)vf->vc=vc;
+      /* allocation failure: links stays 1, so ov_clear only sees the
+         first link's (valid) info */
+      if(!vi||!vc||!vf->offsets||!vf->serialnos||!vf->dataoffsets||
+         !vf->pcmlengths)return(OV_EFAULT);
+    }
+    vf->links=m+1;
 
     vf->offsets[m+1]=end;
     vf->offsets[m]=begin;
@@ -907,6 +926,11 @@ static int _ov_open1(void *f,OggVorbis_File *vf,const char *initial,
      non-seekable stream) */
   if(initial){
     char *buffer=ogg_sync_buffer(&vf->oy,ibytes);
+    if(!buffer){
+      vf->datasource=NULL;
+      ov_clear(vf);
+      return(OV_EFAULT);
+    }
     memcpy(buffer,initial,ibytes);
     ogg_sync_wrote(&vf->oy,ibytes);
   }
@@ -919,6 +943,15 @@ static int _ov_open1(void *f,OggVorbis_File *vf,const char *initial,
   vf->links=1;
   vf->vi=_ogg_calloc(vf->links,sizeof(*vf->vi));
   vf->vc=_ogg_calloc(vf->links,sizeof(*vf->vc));
+  if(!vf->vi||!vf->vc){
+    _ogg_free(vf->vi);
+    _ogg_free(vf->vc);
+    vf->vi=NULL;
+    vf->vc=NULL;
+    vf->datasource=NULL;
+    ov_clear(vf);
+    return(OV_EFAULT);
+  }
   ogg_stream_init(&vf->os,-1); /* fill in the serialno later */
 
   /* Fetch all BOS pages, store the vorbis header and all seen serial
@@ -931,16 +964,22 @@ static int _ov_open1(void *f,OggVorbis_File *vf,const char *initial,
        for second stage of seekable stream open; this saves having to
        seek/reread first link's serialnumber data then. */
     vf->serialnos=_ogg_calloc(serialno_list_size+2,sizeof(*vf->serialnos));
-    vf->serialnos[0]=vf->current_serialno=vf->os.serialno;
-    vf->serialnos[1]=serialno_list_size;
-    memcpy(vf->serialnos+2,serialno_list,serialno_list_size*sizeof(*vf->serialnos));
-
     vf->offsets=_ogg_calloc(1,sizeof(*vf->offsets));
     vf->dataoffsets=_ogg_calloc(1,sizeof(*vf->dataoffsets));
-    vf->offsets[0]=0;
-    vf->dataoffsets[0]=vf->offset;
+    if(!vf->serialnos||!vf->offsets||!vf->dataoffsets){
+      vf->datasource=NULL;
+      ov_clear(vf);
+      ret=OV_EFAULT;
+    }else{
+      vf->serialnos[0]=vf->current_serialno=vf->os.serialno;
+      vf->serialnos[1]=serialno_list_size;
+      memcpy(vf->serialnos+2,serialno_list,serialno_list_size*sizeof(*vf->serialnos));
 
-    vf->ready_state=PARTOPEN;
+      vf->offsets[0]=0;
+      vf->dataoffsets[0]=vf->offset;
+
+      vf->ready_state=PARTOPEN;
+    }
   }
   if(serialno_list)_ogg_free(serialno_list);
   return(ret);

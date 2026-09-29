@@ -80,6 +80,7 @@ ogg_uint32_t *_make_words(char *l,long n,long sparsecount){
   long i,j,count=0;
   ogg_uint32_t marker[33];
   ogg_uint32_t *r=_ogg_malloc((sparsecount?sparsecount:n)*sizeof(*r));
+  if(r==NULL)return(NULL);
   memset(marker,0,sizeof(marker));
 
   for(i=0;i<n;i++){
@@ -369,6 +370,7 @@ int vorbis_book_init_encode(codebook *c,const static_codebook *s){
   c->used_entries=s->entries;
   c->dim=s->dim;
   c->codelist=_make_words(s->lengthlist,s->entries,0);
+  if(c->codelist==NULL)return(-1); /* allocation failure: encoder books are valid */
   c->quantvals=_book_maptype1_quantvals(s->dim, s->entries);
   c->minval=(int)rint(_float32_unpack(s->q_min));
   c->delta=(int)rint(_float32_unpack(s->q_delta));

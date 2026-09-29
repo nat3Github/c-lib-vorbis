@@ -112,7 +112,7 @@ typedef struct {
 
 } vorbis_look_psy;
 
-extern void   _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
+extern int    _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
                            vorbis_info_psy_global *gi,int n,long rate);
 extern void   _vp_psy_clear(vorbis_look_psy *p);
 extern void  *_vi_psy_dup(void *source);

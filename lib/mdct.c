@@ -48,13 +48,19 @@
 /* build lookups for trig functions; also pre-figure scaling and
    some window function algebra. */
 
-void mdct_init(mdct_lookup *lookup,int n){
+int mdct_init(mdct_lookup *lookup,int n){
   int   *bitrev=_ogg_malloc(sizeof(*bitrev)*(n/4));
   DATA_TYPE *T=_ogg_malloc(sizeof(*T)*(n+n/4));
 
   int i;
   int n2=n>>1;
-  int log2n=lookup->log2n=rint(log((float)n)/log(2.f));
+  int log2n;
+  if(!bitrev||!T){
+    if(bitrev)_ogg_free(bitrev);
+    if(T)_ogg_free(T);
+    return -1;
+  }
+  log2n=lookup->log2n=rint(log((float)n)/log(2.f));
   lookup->n=n;
   lookup->trig=T;
   lookup->bitrev=bitrev;
@@ -87,6 +93,7 @@ void mdct_init(mdct_lookup *lookup,int n){
     }
   }
   lookup->scale=FLOAT_CONV(4.f/n);
+  return 0;
 }
 
 /* 8 point butterfly (in place, 4 register) */

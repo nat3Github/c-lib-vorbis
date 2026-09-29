@@ -187,7 +187,7 @@ static const ve_setup_data_template *const setup_list[]={
   0
 };
 
-static void vorbis_encode_floor_setup(vorbis_info *vi,int s,
+static int vorbis_encode_floor_setup(vorbis_info *vi,int s,
                                      const static_codebook *const *const *const books,
                                      const vorbis_info_floor1 *in,
                                      const int *x){
@@ -195,6 +195,7 @@ static void vorbis_encode_floor_setup(vorbis_info *vi,int s,
   vorbis_info_floor1 *f=_ogg_calloc(1,sizeof(*f));
   codec_setup_info *ci=vi->codec_setup;
 
+  if(!f)return -1;
   memcpy(f,in+x[is],sizeof(*f));
 
   /* books */
@@ -222,7 +223,7 @@ static void vorbis_encode_floor_setup(vorbis_info *vi,int s,
   ci->floor_param[ci->floors]=f;
   ci->floors++;
 
-  return;
+  return 0;
 }
 
 static void vorbis_encode_global_psych_setup(vorbis_info *vi,double s,
@@ -301,7 +302,7 @@ static void vorbis_encode_global_stereo(vorbis_info *vi,
   return;
 }
 
-static void vorbis_encode_psyset_setup(vorbis_info *vi,double s,
+static int vorbis_encode_psyset_setup(vorbis_info *vi,double s,
                                        const int *nn_start,
                                        const int *nn_partition,
                                        const double *nn_thresh,
@@ -315,6 +316,7 @@ static void vorbis_encode_psyset_setup(vorbis_info *vi,double s,
     ci->psys=block+1;
   if(!p){
     p=_ogg_calloc(1,sizeof(*p));
+    if(!p)return -1;
     ci->psy_param[block]=p;
   }
 
@@ -328,7 +330,7 @@ static void vorbis_encode_psyset_setup(vorbis_info *vi,double s,
     p->normal_thresh=nn_thresh[is];
   }
 
-  return;
+  return 0;
 }
 
 static void vorbis_encode_tonemask_setup(vorbis_info *vi,double s,int block,
@@ -453,7 +455,7 @@ static void vorbis_encode_blocksize_setup(vorbis_info *vi,double s,
 
 }
 
-static void vorbis_encode_residue_setup(vorbis_info *vi,
+static int vorbis_encode_residue_setup(vorbis_info *vi,
                                         int number, int block,
                                         const vorbis_residue_template *res){
 
@@ -466,6 +468,7 @@ static void vorbis_encode_residue_setup(vorbis_info *vi,
   _ogg_free(ci->residue_param[number]);
   r=ci->residue_param[number]=_ogg_malloc(sizeof(*r));
 
+  if(!r)return -1;
   memcpy(r,res->res,sizeof(*r));
   if(ci->residues<=number)ci->residues=number+1;
 
@@ -586,10 +589,11 @@ static void vorbis_encode_residue_setup(vorbis_info *vi,
     if(r->end==0)r->end=r->grouping; /* LFE channel */
 
   }
+  return 0;
 }
 
 /* we assume two maps in this encoder */
-static void vorbis_encode_map_n_res_setup(vorbis_info *vi,double s,
+static int vorbis_encode_map_n_res_setup(vorbis_info *vi,double s,
                                           const vorbis_mapping_template *maps){
 
   codec_setup_info *ci=vi->codec_setup;
@@ -604,6 +608,13 @@ static void vorbis_encode_map_n_res_setup(vorbis_info *vi,double s,
 
     ci->map_param[i]=_ogg_calloc(1,sizeof(*map));
     ci->mode_param[i]=_ogg_calloc(1,sizeof(*mode));
+    if(!ci->map_param[i]||!ci->mode_param[i]){
+      _ogg_free(ci->map_param[i]);
+      _ogg_free(ci->mode_param[i]);
+      ci->map_param[i]=NULL;
+      ci->mode_param[i]=NULL;
+      return -1;
+    }
 
     memcpy(ci->mode_param[i],mode+i,sizeof(*_mode_template));
     if(i>=ci->modes)ci->modes=i+1;
@@ -613,9 +624,11 @@ static void vorbis_encode_map_n_res_setup(vorbis_info *vi,double s,
     if(i>=ci->maps)ci->maps=i+1;
 
     for(j=0;j<map[i].submaps;j++)
-      vorbis_encode_residue_setup(vi,map[i].residuesubmap[j],i
-                                  ,res+map[i].residuesubmap[j]);
+      if(vorbis_encode_residue_setup(vi,map[i].residuesubmap[j],i
+                                     ,res+map[i].residuesubmap[j]))
+        return -1;
   }
+  return 0;
 }
 
 static double setting_to_approx_bitrate(vorbis_info *vi){
@@ -719,10 +732,11 @@ int vorbis_encode_setup_init(vorbis_info *vi){
   /* floor setup; choose proper floor params.  Allocated on the floor
      stack in order; if we alloc only a single long floor, it's 0 */
   for(i=0;i<setup->floor_mappings;i++)
-    vorbis_encode_floor_setup(vi,hi->base_setting,
-                              setup->floor_books,
-                              setup->floor_params,
-                              setup->floor_mapping_list[i]);
+    if(vorbis_encode_floor_setup(vi,hi->base_setting,
+                                 setup->floor_books,
+                                 setup->floor_params,
+                                 setup->floor_mapping_list[i]))
+      return(OV_EFAULT);
 
   /* setup of [mostly] short block detection and stereo*/
   vorbis_encode_global_psych_setup(vi,hi->trigger_setting,
@@ -731,27 +745,29 @@ int vorbis_encode_setup_init(vorbis_info *vi){
   vorbis_encode_global_stereo(vi,hi,setup->stereo_modes);
 
   /* basic psych setup and noise normalization */
-  vorbis_encode_psyset_setup(vi,hi->base_setting,
-                             setup->psy_noise_normal_start[0],
-                             setup->psy_noise_normal_partition[0],
-                             setup->psy_noise_normal_thresh,
-                             0);
-  vorbis_encode_psyset_setup(vi,hi->base_setting,
-                             setup->psy_noise_normal_start[0],
-                             setup->psy_noise_normal_partition[0],
-                             setup->psy_noise_normal_thresh,
-                             1);
+  if(vorbis_encode_psyset_setup(vi,hi->base_setting,
+                                setup->psy_noise_normal_start[0],
+                                setup->psy_noise_normal_partition[0],
+                                setup->psy_noise_normal_thresh,
+                                0) ||
+     vorbis_encode_psyset_setup(vi,hi->base_setting,
+                                setup->psy_noise_normal_start[0],
+                                setup->psy_noise_normal_partition[0],
+                                setup->psy_noise_normal_thresh,
+                                1))
+    return(OV_EFAULT);
   if(!singleblock){
-    vorbis_encode_psyset_setup(vi,hi->base_setting,
-                               setup->psy_noise_normal_start[1],
-                               setup->psy_noise_normal_partition[1],
-                                    setup->psy_noise_normal_thresh,
-                               2);
-    vorbis_encode_psyset_setup(vi,hi->base_setting,
-                               setup->psy_noise_normal_start[1],
-                               setup->psy_noise_normal_partition[1],
-                               setup->psy_noise_normal_thresh,
-                               3);
+    if(vorbis_encode_psyset_setup(vi,hi->base_setting,
+                                  setup->psy_noise_normal_start[1],
+                                  setup->psy_noise_normal_partition[1],
+                                  setup->psy_noise_normal_thresh,
+                                  2) ||
+       vorbis_encode_psyset_setup(vi,hi->base_setting,
+                                  setup->psy_noise_normal_start[1],
+                                  setup->psy_noise_normal_partition[1],
+                                  setup->psy_noise_normal_thresh,
+                                  3))
+      return(OV_EFAULT);
   }
 
   /* tone masking setup */
@@ -830,7 +846,8 @@ int vorbis_encode_setup_init(vorbis_info *vi){
     vorbis_encode_ath_setup(vi,3);
   }
 
-  vorbis_encode_map_n_res_setup(vi,hi->base_setting,setup->maps);
+  if(vorbis_encode_map_n_res_setup(vi,hi->base_setting,setup->maps))
+    return(OV_EFAULT);
 
   /* set bitrate readonlies and management */
   if(hi->bitrate_av>0)
@@ -913,6 +930,7 @@ int vorbis_encode_setup_vbr(vorbis_info *vi,
   if(rate<=0) return OV_EINVAL;
 
   ci=vi->codec_setup;
+  if(!ci) return OV_EFAULT; /* vorbis_info_init could not allocate */
   hi=&ci->hi;
 
   quality+=.0000001;
@@ -963,6 +981,7 @@ int vorbis_encode_setup_managed(vorbis_info *vi,
   if(rate<=0) return OV_EINVAL;
 
   ci=vi->codec_setup;
+  if(!ci) return OV_EFAULT; /* vorbis_info_init could not allocate */
   hi=&ci->hi;
   tnominal=nominal_bitrate;
 

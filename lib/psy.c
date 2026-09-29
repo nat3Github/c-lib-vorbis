@@ -36,6 +36,7 @@ vorbis_look_psy_global *_vp_global_look(vorbis_info *vi){
   codec_setup_info *ci=vi->codec_setup;
   vorbis_info_psy_global *gi=&ci->psy_g_param;
   vorbis_look_psy_global *look=_ogg_calloc(1,sizeof(*look));
+  if(!look)return NULL;
 
   look->channels=vi->channels;
 
@@ -82,6 +83,20 @@ static void attenuate_curve(float *c,float att){
     c[i]+=att;
 }
 
+static void free_tone_curves(float ***c){
+  int i,j;
+  if(c){
+    for(i=0;i<P_BANDS;i++){
+      if(c[i])
+        for(j=0;j<P_LEVELS;j++)
+          _ogg_free(c[i][j]);
+      _ogg_free(c[i]);
+    }
+    _ogg_free(c);
+  }
+}
+
+/* NULL on allocation failure */
 static float ***setup_tone_curves(float curveatt_dB[P_BANDS],float binHz,int n,
                                   float center_boost, float center_decay_rate){
   int i,j,k,m;
@@ -90,7 +105,8 @@ static float ***setup_tone_curves(float curveatt_dB[P_BANDS],float binHz,int n,
   float athc[P_LEVELS][EHMER_MAX];
   float *brute_buffer=alloca(n*sizeof(*brute_buffer));
 
-  float ***ret=_ogg_malloc(sizeof(*ret)*P_BANDS);
+  float ***ret=_ogg_calloc(P_BANDS,sizeof(*ret));
+  if(!ret)return NULL;
 
   memset(workc,0,sizeof(workc));
 
@@ -157,7 +173,11 @@ static float ***setup_tone_curves(float curveatt_dB[P_BANDS],float binHz,int n,
 
   for(i=0;i<P_BANDS;i++){
     int hi_curve,lo_curve,bin;
-    ret[i]=_ogg_malloc(sizeof(**ret)*P_LEVELS);
+    ret[i]=_ogg_calloc(P_LEVELS,sizeof(**ret));
+    if(!ret[i]){
+      free_tone_curves(ret);
+      return NULL;
+    }
 
     /* low frequency curves are measured with greater resolution than
        the MDCT/FFT will actually give us; we want the curve applied
@@ -178,6 +198,10 @@ static float ***setup_tone_curves(float curveatt_dB[P_BANDS],float binHz,int n,
 
     for(m=0;m<P_LEVELS;m++){
       ret[i][m]=_ogg_malloc(sizeof(***ret)*(EHMER_MAX+2));
+      if(!ret[i][m]){
+        free_tone_curves(ret);
+        return NULL;
+      }
 
       for(j=0;j<n;j++)brute_buffer[j]=999.;
 
@@ -263,8 +287,9 @@ static float ***setup_tone_curves(float curveatt_dB[P_BANDS],float binHz,int n,
   return(ret);
 }
 
-void _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
-                  vorbis_info_psy_global *gi,int n,long rate){
+/* returns nonzero on allocation failure; _vp_psy_clear frees the rest */
+int _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
+                 vorbis_info_psy_global *gi,int n,long rate){
   long i,j,lo=-99,hi=1;
   long maxoc;
   memset(p,0,sizeof(*p));
@@ -279,6 +304,7 @@ void _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
 
   p->octave=_ogg_malloc(n*sizeof(*p->octave));
   p->bark=_ogg_malloc(n*sizeof(*p->bark));
+  if(!p->ath||!p->octave||!p->bark)return -1;
   p->vi=vi;
   p->n=n;
   p->rate=rate;
@@ -325,11 +351,15 @@ void _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
 
   p->tonecurves=setup_tone_curves(vi->toneatt,rate*.5/n,n,
                                   vi->tone_centerboost,vi->tone_decay);
+  if(!p->tonecurves)return -1;
 
   /* set up rolling noise median */
-  p->noiseoffset=_ogg_malloc(P_NOISECURVES*sizeof(*p->noiseoffset));
-  for(i=0;i<P_NOISECURVES;i++)
+  p->noiseoffset=_ogg_calloc(P_NOISECURVES,sizeof(*p->noiseoffset));
+  if(!p->noiseoffset)return -1;
+  for(i=0;i<P_NOISECURVES;i++){
     p->noiseoffset[i]=_ogg_malloc(n*sizeof(**p->noiseoffset));
+    if(!p->noiseoffset[i])return -1;
+  }
 
   for(i=0;i<n;i++){
     float halfoc=toOC((i+.5)*rate/(2.*n))*2.;
@@ -359,23 +389,16 @@ void _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
     _analysis_output_always("noiseoff2",ls++,p->noiseoffset[2],n,1,0,0);
   }
 #endif
+  return 0;
 }
 
 void _vp_psy_clear(vorbis_look_psy *p){
-  int i,j;
+  int i;
   if(p){
     if(p->ath)_ogg_free(p->ath);
     if(p->octave)_ogg_free(p->octave);
     if(p->bark)_ogg_free(p->bark);
-    if(p->tonecurves){
-      for(i=0;i<P_BANDS;i++){
-        for(j=0;j<P_LEVELS;j++){
-          _ogg_free(p->tonecurves[i][j]);
-        }
-        _ogg_free(p->tonecurves[i]);
-      }
-      _ogg_free(p->tonecurves);
-    }
+    free_tone_curves(p->tonecurves);
     if(p->noiseoffset){
       for(i=0;i<P_NOISECURVES;i++){
         _ogg_free(p->noiseoffset[i]);

@@ -92,6 +92,7 @@ static vorbis_info_mapping *mapping0_unpack(vorbis_info *vi,oggpack_buffer *opb)
   int i,b;
   vorbis_info_mapping0 *info=_ogg_calloc(1,sizeof(*info));
   codec_setup_info     *ci=vi->codec_setup;
+  if(!info)return(NULL);
   if(vi->channels<=0)goto err_out;
 
   b=oggpack_read(opb,1);
@@ -250,6 +251,7 @@ static int mapping0_forward(vorbis_block *vb){
   vorbis_look_psy *psy_look=b->psy+blocktype+(vb->W?2:0);
 
   vb->mode=modenumber;
+  if(!gmdct||!iwork||!floor_posts)return(OV_EFAULT);
 
   for(i=0;i<vi->channels;i++){
     float scale=4.f/n;
@@ -260,6 +262,7 @@ static int mapping0_forward(vorbis_block *vb){
 
     iwork[i]=_vorbis_block_alloc(vb,n/2*sizeof(**iwork));
     gmdct[i]=_vorbis_block_alloc(vb,n/2*sizeof(**gmdct));
+    if(!iwork[i]||!gmdct[i])return(OV_EFAULT);
 
     scale_dB=todB(&scale) + .345; /* + .345 is a hack; the original
                                      todB estimation used on IEEE 754
@@ -362,6 +365,7 @@ static int mapping0_forward(vorbis_block *vb){
   {
     float   *noise        = _vorbis_block_alloc(vb,n/2*sizeof(*noise));
     float   *tone         = _vorbis_block_alloc(vb,n/2*sizeof(*tone));
+    if(!noise||!tone)return(OV_EFAULT);
 
     for(i=0;i<vi->channels;i++){
       /* the encoder setup assumes that all the modes used by any
@@ -379,6 +383,7 @@ static int mapping0_forward(vorbis_block *vb){
       vb->mode=modenumber;
 
       floor_posts[i]=_vorbis_block_alloc(vb,PACKETBLOBS*sizeof(**floor_posts));
+      if(!floor_posts[i])return(OV_EFAULT);
       memset(floor_posts[i],0,sizeof(**floor_posts)*PACKETBLOBS);
 
       for(j=0;j<n/2;j++)
@@ -672,6 +677,9 @@ static int mapping0_forward(vorbis_block *vb){
 
         classifications=_residue_P[ci->residue_type[resnum]]->
           class(vb,b->residue[resnum],couple_bundle,zerobundle,ch_in_bundle);
+        /* NULL also means 'all channels silent' */
+        for(j=0;j<ch_in_bundle;j++)
+          if(zerobundle[j] && !classifications)return(OV_EFAULT);
 
         ch_in_bundle=0;
         for(j=0;j<vi->channels;j++)
