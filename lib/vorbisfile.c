@@ -859,6 +859,10 @@ static int _fetch_and_process_packet(OggVorbis_File *vf,
           vf->current_serialno=vf->os.serialno;
           vf->current_link++;
           link=0;
+          /* _fetch_headers already submitted every page it read, the
+             last one is og; submitting og again below looked like a
+             lost page (OV_HOLE at every link boundary) */
+          continue;
         }
       }
     }
