@@ -2,7 +2,7 @@
     .name = .vorbis,
     .fingerprint = 0x808d28d2a99957e5,
     .version = "1.3.7",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .ogg = .{
             .url = "git+https://github.com/nat3Github/c-lib-ogg#5cf65748a2c4c54992014ba1c0ac7fb8accc56a9",
