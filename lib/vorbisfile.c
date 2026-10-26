@@ -1335,6 +1335,7 @@ int ov_raw_seek(OggVorbis_File *vf,ogg_int64_t pos){
     int thisblock=0;
     int lastflag=0;
     int firstflag=0;
+    int datapage=0;
     ogg_int64_t pagepos=-1;
 
     ogg_stream_init(&work_os,vf->current_serialno); /* get the memory ready */
@@ -1430,12 +1431,17 @@ int ov_raw_seek(OggVorbis_File *vf,ogg_int64_t pos){
         ogg_stream_reset_serialno(&vf->os,serialno);
         ogg_stream_reset_serialno(&work_os,serialno);
         vf->ready_state=STREAMSET;
+        datapage=0;
       }
 
       /* also when the link was already set up (right after a seekable
          open); otherwise a link whose first audio page is also its last
-         loses that page's packets */
-      firstflag=(pagepos<=vf->dataoffsets[vf->current_link]);
+         loses that page's packets. Bytes that are not a page may sit
+         between the headers and that page: from a position at or before
+         the data start, the first page of the link read is the first. */
+      firstflag=(pagepos<=vf->dataoffsets[vf->current_link] ||
+                 (pos<=vf->dataoffsets[vf->current_link] && !datapage));
+      if(ogg_page_serialno(&og)==vf->current_serialno)datapage=1;
       ogg_stream_pagein(&vf->os,&og);
       ogg_stream_pagein(&work_os,&og);
       lastflag=ogg_page_eos(&og);
