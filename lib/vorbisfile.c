@@ -1605,6 +1605,21 @@ int ov_pcm_seek_page(OggVorbis_File *vf,ogg_int64_t pos){
       }
     }
 
+    /* The last link ends at the start of its last page (offsets[links]),
+       and bisection only reads pages that start before it. Without any
+       such page, that last page is also the first one, behind bytes that
+       are not a page (else begin==end above). Grab it like the one page
+       case. */
+    if(got_page<0 && link==vf->links-1){
+      result=_seek_helper(vf,vf->offsets[link+1]);
+      if(result) goto seek_error;
+
+      result=_get_next_page(vf,&og,1);
+      if(result<0) goto seek_error;
+
+      if(ogg_page_serialno(&og)==vf->serialnos[link])got_page=result;
+    }
+
     /* Out of bisection: did it 'fail?' */
     if(best == -1){
 
